@@ -4,6 +4,7 @@ import struct
 import gzip
 import blackboxprotobuf
 import os
+import pprint
 
 CONFIG_DIR = os.path.expanduser('~') + '/.teenager/bilibili'
 
@@ -57,7 +58,10 @@ def is_allowed_uploader(val):
 	# 相关视频格式
 	if val.get('1') in block_uid:
 		return False
-	if val.get('2') in block_user:
+	user = val.get('2')
+	if isinstance(user, bytes):
+		user = user.decode('utf-8')
+	if user in block_user:
 		return False
 	return True
 
@@ -130,14 +134,21 @@ def bili_grpc_encode(d, t):
 
 def bili_filter_json(name, flow, rule):
 	data = json.loads(flow.response.text)
-	for r in rule:
-		data = bili_filter_dict(name, data, r)
+	if isinstance(rule, list):
+		for r in rule:
+			data = bili_filter_dict(name, data, r)
+	else:
+		data = bili_filter_dict(name, data, rule)
 	flow.response.text = json.dumps(data)
 
 def bili_filter_grpc(name, flow, rule):
 	data, template = bili_grpc_decode(flow.response.raw_content)
-	for r in rule:
-		data = bili_filter_dict(name, data, r)
+	#pprint.pprint(data)
+	if isinstance(rule, list):
+		for r in rule:
+			data = bili_filter_dict(name, data, r)
+	else:
+		data = bili_filter_dict(name, data, rule)
 	flow.response.raw_content = bili_grpc_encode(data, template)
 
 def response(flow) -> None:
@@ -145,15 +156,15 @@ def response(flow) -> None:
 		# 推荐
 		if flow.request.path.startswith('/x/v2/feed/index'):
 			rule = {'data': {'items': [{'ad_info': is_none}, {'goto': is_allowed_goto}, {'title': is_allowed_str}, {'talk_back': is_allowed_str}, {'args': is_allowed_uploader}, {'owner': is_allowed_uploader}]}}
-			bili_filter_json('/x/v2/feed/index', flow, [rule])
+			bili_filter_json('/x/v2/feed/index', flow, rule)
 		# 搜索 - 广场
 		if flow.request.path.startswith('/x/v2/search/square?'):
 			rule = {'data': {'data': {'list': [{'keyword': is_allowed_str}, {'show_name': is_allowed_str}]}}}
-			bili_filter_json('/x/v2/search/square?', flow, [rule])
+			bili_filter_json('/x/v2/search/square?', flow, rule)
 		# 搜索 - 直播
 		if flow.request.path.startswith('/x/v2/search/live?'):
 			rule = {'data': {'live_room': {'items': [{'name': is_allowed_user}, {'title': is_allowed_str}, {'area_v2_name': is_allowed_str}, {'tags': is_allowed_str}]}}}
-			bili_filter_json('/x/v2/search/live?', flow, [rule])
+			bili_filter_json('/x/v2/search/live?', flow, rule)
 		# 搜索 - 番剧/用户/影视/专栏
 		if flow.request.path.startswith('/x/v2/search/type?'):
 			# 用户
@@ -164,13 +175,17 @@ def response(flow) -> None:
 		# 搜索
 		if flow.request.path.startswith('/x/v2/search?'):
 			rule = {'data': {'item': [{'author': is_allowed_user}, {'title': is_allowed_str}, {'items': is_allowed_search_channel}]}}
-			bili_filter_json('/x/v2/search?', flow, [rule])
+			bili_filter_json('/x/v2/search?', flow, rule)
 		# 主页
 		if flow.request.path.startswith('/x/v2/space?'):
 			rule = {'data': {'archive': {'item': [{'author': is_allowed_user}, {'title': is_allowed_str}]}}}
-			bili_filter_json('/x/v2/space?', flow, [rule])
+			bili_filter_json('/x/v2/space?', flow, rule)
 	if flow.request.pretty_host == 'grpc.biliapi.net':
 		# 相关视频
 		if flow.request.path == '/bilibili.app.view.v1.View/View':
-			rule = {'10': [{'3': is_allowed_str}, {'4': is_allowed_uploader}]}
-			bili_filter_grpc('/bilibili.app.view.v1.View/View', flow, [rule])
+			rule = {'10': [{'3': is_allowed_str}, {'4': is_allowed_uploader}], '5':[{'2': is_allowed_str}]}
+			bili_filter_grpc('/bilibili.app.view.v1.View/View', flow, rule)
+		# 搜索提示
+		if flow.request.path == '/bilibili.app.interface.v1.Search/Suggest3':
+			rule = {'2': [{'2': is_allowed_str}, {'3': is_allowed_str}]}
+			bili_filter_grpc('/bilibili.app.interface.v1.Search/Suggest3', flow, rule)
